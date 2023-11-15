@@ -16,7 +16,7 @@ jobs:
           cache: 'pip'
 
       - name: Pip install
-        run: pip install -r requirements.txt
+        run: pip install -r dagger/requirements.txt
 
       - name: Install Dagger CLI
         run: cd /usr/local && { curl -L https://dl.dagger.io/dagger/install.sh | sh; cd -; }
