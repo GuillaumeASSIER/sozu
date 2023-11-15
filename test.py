@@ -8,7 +8,10 @@ async def test():
         src = client.host().directory(".")
 
         python = (
-            client.container().from_("rust:1.70")
+            client.container().from_("rust:1.70.0-slim-bookworm")
+            # Install protbuf requirement
+            .with_exec(["sudo", "apt-get", "update"])
+            .with_exec(["sudo", "apt-get", "install", "-y", "protobuf-compiler"])
             # mount cloned repository into image
             .with_directory("/", src)
             # set current working directory for next commands
