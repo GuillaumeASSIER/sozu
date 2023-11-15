@@ -15,7 +15,7 @@ async def test():
             .with_exec(["sudo", "apt-get", "update"])
             .with_exec(["sudo", "apt-get", "install", "-y", "protobuf-compiler"])
             # mount cloned repository into image
-            .with_directory("/", src)
+            .with_directory("/src", src)
             # set current working directory for next commands
             .with_workdir("/src")
             # Build sozu
