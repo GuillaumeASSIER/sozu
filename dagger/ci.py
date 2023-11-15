@@ -5,8 +5,6 @@ import dagger
 async def test():
     config = dagger.Config(log_output=sys.stdout)
 
-    src = client.host().directory(".")
-
     async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
         # get reference to the local project
         src = client.host().directory(".")
