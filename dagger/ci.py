@@ -3,12 +3,14 @@ import anyio
 import dagger
 
 async def test():
+    config = dagger.Config(log_output=sys.stdout)
+
     async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
         # get reference to the local project
         src = client.host().directory(".")
 
         python = (
-            client.container().from_("rust:1.70.0-slim-bookworm")
+            client.container().from_("rust:1.70.0-bookworm")
             # Install protbuf requirement
             .with_exec(["apt-get", "update"])
             .with_exec(["apt-get", "install", "-y", "protobuf-compiler"])
@@ -21,6 +23,10 @@ async def test():
             # Run e2e tests
             .with_exec(["cargo", "test"])
         )
+
+        build = {
+            
+        }
 
         # execute
         await python.sync()
