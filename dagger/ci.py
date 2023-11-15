@@ -12,8 +12,8 @@ async def test():
         python = (
             client.container().from_("cimg/rust:1.70")
             # Install protbuf requirement
-            .with_exec(["apt-get", "update"])
-            .with_exec(["apt-get", "install", "-y", "protobuf-compiler"])
+            .with_exec(["sudo", "apt-get", "update"])
+            .with_exec(["sudo", "apt-get", "install", "-y", "protobuf-compiler"])
             # mount cloned repository into image
             .with_directory("/", src)
             # set current working directory for next commands
