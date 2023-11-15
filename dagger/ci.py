@@ -17,7 +17,7 @@ async def test():
             # mount cloned repository into image
             .with_directory("/", src)
             # set current working directory for next commands
-            .with_workdir("/")
+            .with_workdir("/src")
             # Build sozu
             .with_exec(["cargo", "build", "--release"])
             # Run e2e tests
