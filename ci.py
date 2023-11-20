@@ -90,14 +90,15 @@ async def test():
 
         service_sozu_RSA2048 = (
             client.container()
-            .from_("debian:12.2")
+            .from_("bitnami/debian-base-buildpack:bookworm-r0")
             # Cache
             #.with_mounted_cache("/var/lib/apt/lists/", apt_cache)
             # Retrieve executable
             .with_file("/bin/sozu", container_sozu.file("/src/target/release/sozu"))
-            .with_exec(["apt", "update"])
-            .with_exec(["apt", "install", "-y", "openssl"])
-            .with_exec(["openssl", "genrsa", "-out", "lolcatho.st.key", "2048"])
+            # Mount CI
+            .with_directory("/src", src, exclude=["ci.py", "test.toml"])
+            .with_workdir("/src")
+            .with_exec(["openssl", "genrsa", "-out", "ci/lolcatho.st.key", "2048"])
             .with_exec(
                 [
                     "openssl",
@@ -105,16 +106,18 @@ async def test():
                     "-new",
                     "-x509",
                     "-key",
-                    "lolcatho.st.key",
+                    "ci/lolcatho.st.key",
                     "-out",
-                    "lolcatho.st.pem",
-                    "-days" "365",
+                    "ci/lolcatho.st.pem",
+                    "-days",
+                     "365",
                     "-subj",
-                    "CN=lolcatho.st",
+                    "/CN=lolcatho.st",
                 ]
             )
             .with_service_binding("lolcatho.st", service_receiver)
-            .with_exec(["/bin/sozu", "-c", "ci/test.toml"])
+            # Launch sozu
+            .with_exec(["/bin/sozu", "start", "-c", "ci/test.toml"])
             .with_exposed_port(8080)
             .with_exposed_port(8443)
             .as_service()
@@ -128,8 +131,8 @@ async def test():
         # Retrieve executable
         .with_file(
             "/bin/bombardier", container_bombardier.file("/go/bin/bombardier")
-        ).with_service_binding("sozu", service_sozu_RSA2048).with_exec(
-            ["/bin/bombardier", "-c", "800", "-d", "60s", "https://sozu"]
+        ).with_service_binding("service_sozu_RSA2048", service_sozu_RSA2048).with_exec(
+            ["/bin/bombardier", "-c", "800", "-d", "60s", "https://lolcatho.st:8443"]
         ).stdout())
 
     ##################

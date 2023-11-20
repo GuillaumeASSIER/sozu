@@ -58,7 +58,7 @@ protocol = "http"
 load_balancing = "ROUND_ROBIN"
 
 frontends = [
-    { address = "0.0.0.0:8443", hostname = "lolcatho.st", certificate = "lolcatho.st.pem", key = "lolcatho.st.key"},
+    { address = "0.0.0.0:8443", hostname = "lolcatho.st", certificate = "ci/lolcatho.st.pem", key = "ci/lolcatho.st.key"},
 ]
 
 backends = [
