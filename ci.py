@@ -9,11 +9,6 @@ async def test():
         # get reference to the local project
         src = client.host().directory(".")
 
-        # Cache volume
-        rust_cache = client.cache_volume("rust")
-        go_cache = client.cache_volume("go")
-        #apt_cache = client.cache_volume("apt")
-
         ##################
         # Build containers
         ##################
@@ -25,12 +20,12 @@ async def test():
             .with_exec(["apt", "update"])
             .with_exec(["apt", "install", "-y", "protobuf-compiler"])
             # Directory mapping
-            .with_directory("/src", src, exclude=["ci.py", "test.toml"])
+            .with_directory("/src", src)
             .with_workdir("/src")
             # Cache
-            .with_mounted_cache("~/.cargo/registry", rust_cache)
-            .with_mounted_cache("~/.cargo/git", rust_cache)
-            .with_mounted_cache("/target", rust_cache)
+            .with_mounted_cache("~/.cargo/registry", client.cache_volume("container_sozu_registry"))
+            .with_mounted_cache("~/.cargo/git", client.cache_volume("container_sozu_git"))
+            #.with_mounted_cache("/target", client.cache_volume("container_sozu_target"))
             # Build
             .with_exec(["cargo", "build", "--release"])
         )
@@ -43,9 +38,9 @@ async def test():
             )
             .with_workdir("/lagging_server")
             # Cache
-            .with_mounted_cache("~/.cargo/registry", rust_cache)
-            .with_mounted_cache("~/.cargo/git", rust_cache)
-            #.with_mounted_cache("/lagging_server/target", rust_cache)
+            .with_mounted_cache("~/.cargo/registry", client.cache_volume("container_receiver_registry"))
+            .with_mounted_cache("~/.cargo/git", client.cache_volume("container_receiver_git"))
+            #.with_mounted_cache("/lagging_server/target", client.cache_volume("container_receiver_target"))
             # Build
             .with_exec(["cargo", "build", "--release"])
         )
@@ -54,8 +49,8 @@ async def test():
             client.container()
             .from_("golang:1.18.10-bullseye")
             # Cache
-            .with_mounted_cache("/go/pkg/mod", go_cache)
-            .with_mounted_cache("/root/.cache/go-build", go_cache)
+            .with_mounted_cache("/go/pkg/mod", client.cache_volume("container_receiver_mod"))
+            .with_mounted_cache("/root/.cache/go-build", client.cache_volume("container_receiver_go-build"))
             # Build
             .with_env_variable("CGO_ENABLED", "0")
             .with_exec(["go", "install", "github.com/codesenberg/bombardier@latest"])   
@@ -96,7 +91,7 @@ async def test():
             # Retrieve executable
             .with_file("/bin/sozu", container_sozu.file("/src/target/release/sozu"))
             # Mount CI
-            .with_directory("/src", src, exclude=["ci.py", "test.toml"])
+            .with_directory("/src", src)
             .with_workdir("/src")
             .with_exec(["openssl", "genrsa", "-out", "ci/lolcatho.st.key", "2048"])
             .with_exec(
@@ -115,7 +110,7 @@ async def test():
                     "/CN=lolcatho.st",
                 ]
             )
-            .with_service_binding("lolcatho.st", service_receiver)
+            .with_service_binding("service_receiver", service_receiver)
             # Launch sozu
             .with_exec(["/bin/sozu", "start", "-c", "ci/test.toml"])
             .with_exposed_port(8080)
@@ -131,7 +126,7 @@ async def test():
         # Retrieve executable
         .with_file(
             "/bin/bombardier", container_bombardier.file("/go/bin/bombardier")
-        ).with_service_binding("service_sozu_RSA2048", service_sozu_RSA2048).with_exec(
+        ).with_service_binding("lolcatho.st", service_sozu_RSA2048).with_exec(
             ["/bin/bombardier", "-c", "800", "-d", "60s", "https://lolcatho.st:8443"]
         ).stdout())
 
