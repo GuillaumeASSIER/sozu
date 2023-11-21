@@ -27,14 +27,14 @@ async def test():
             .with_mounted_cache("~/.cargo/git", client.cache_volume("container_sozu_git"))
             #.with_mounted_cache("/target", client.cache_volume("container_sozu_target"))
             # Build
-            .with_exec(["cargo", "build", "--release"])
+            .with_exec(["cargo", "build"]) # "--release"
         )
 
         container_receiver = (
             client.container()
             .from_("rust:1.70.0-bookworm")
             .with_exec(
-                ["git", "clone", "https://github.com/sykursen/lagging_server.git"]
+                ["git", "clone", "https://github.com/Keksoj/lagging_server.git"]
             )
             .with_workdir("/lagging_server")
             # Cache
@@ -127,7 +127,7 @@ async def test():
         .with_file(
             "/bin/bombardier", container_bombardier.file("/go/bin/bombardier")
         ).with_service_binding("lolcatho.st", service_sozu_RSA2048).with_exec(
-            ["/bin/bombardier", "-c", "800", "-d", "60s", "https://lolcatho.st:8443"]
+            ["/bin/bombardier", "-c", "800", "-d", "60s", "-k", "https://lolcatho.st:8443"]
         ).stdout())
 
     ##################
