@@ -1,4 +1,5 @@
 import sys
+from datetime import datetime
 
 import anyio
 import dagger
@@ -6,8 +7,6 @@ import dagger
 
 async def test():
     async with dagger.Connection(dagger.Config(log_output=sys.stderr)) as client:
-        # get reference to the local project
-        src = client.host().directory(".")
 
         ##################
         # Build containers
@@ -15,45 +14,47 @@ async def test():
 
         container_sozu = (
             client.container()
-            .from_("rust:1.70.0-bookworm")
+            .from_("fedora:39")
             # Install protbuf requirement
-            .with_exec(["apt", "update"])
-            .with_exec(["apt", "install", "-y", "protobuf-compiler"])
+            .with_exec(["dnf","install","-y","rust","cargo","protobuf-compiler"])
             # Directory mapping
-            .with_directory("/src", src)
-            .with_workdir("/src")
+            .with_directory("/app", await client.host().directory(".", exclude=[".git","ci.py","**/ci"]))
+            .with_workdir("/app")
             # Cache
             .with_mounted_cache("~/.cargo/registry", client.cache_volume("container_sozu_registry"))
             .with_mounted_cache("~/.cargo/git", client.cache_volume("container_sozu_git"))
             #.with_mounted_cache("/target", client.cache_volume("container_sozu_target"))
             # Build
-            .with_exec(["cargo", "build"]) # "--release"
+            .with_exec(["cargo", "build", "--release"])
         )
 
         container_receiver = (
             client.container()
-            .from_("rust:1.70.0-bookworm")
-            .with_exec(
-                ["git", "clone", "https://github.com/Keksoj/lagging_server.git"]
-            )
-            .with_workdir("/lagging_server")
+            .from_("fedora:39")
+            .with_exec(["dnf", "install","-y","rust","cargo"])
+            .with_directory("/app", client.git("https://github.com/Keksoj/lagging_server").branch("main").tree())
             # Cache
             .with_mounted_cache("~/.cargo/registry", client.cache_volume("container_receiver_registry"))
             .with_mounted_cache("~/.cargo/git", client.cache_volume("container_receiver_git"))
             #.with_mounted_cache("/lagging_server/target", client.cache_volume("container_receiver_target"))
             # Build
+            .with_workdir("/app")
             .with_exec(["cargo", "build", "--release"])
         )
 
         container_bombardier = (
             client.container()
-            .from_("golang:1.18.10-bullseye")
-            # Cache
-            .with_mounted_cache("/go/pkg/mod", client.cache_volume("container_receiver_mod"))
-            .with_mounted_cache("/root/.cache/go-build", client.cache_volume("container_receiver_go-build"))
-            # Build
+            .from_("fedora:39")
+            .with_exec(["dnf","install","-y","golang"])
             .with_env_variable("CGO_ENABLED", "0")
-            .with_exec(["go", "install", "github.com/codesenberg/bombardier@latest"])   
+            .with_env_variable("GOPATH", "/go")
+            .with_directory("/app", client.git("https://github.com/codesenberg/bombardier").branch("master").tree())
+            # Cache
+            .with_mounted_cache("$GOPATH/go/pkg/mod", client.cache_volume("container_receiver_mod"))
+            .with_mounted_cache("~/.cache/go-build", client.cache_volume("container_receiver_go-build"))
+            # Build
+            .with_workdir("app")
+            .with_exec(["go","build","-o","bombardier"])   
         )
 
         async def container_executor(box):
@@ -70,46 +71,30 @@ async def test():
 
         service_receiver = (
             client.container()
-            .from_("debian:12.2")
+            .from_("fedora:39")
             # Retrieve executable
             .with_file(
                 "/bin/lagging_server",
                 container_receiver.file(
-                    "/lagging_server/target/release/lagging_server"
+                    "/app/target/release/lagging_server"
                 ),
             )
-            .with_exec(["/bin/lagging_server", "--port", "1054"])
-            .with_exposed_port(1054)
+            .with_exec(["/bin/lagging_server", "--port", "4444"])
+            .with_exposed_port(4444)
             .as_service()
         )
 
-        service_sozu_RSA2048 = (
+        service_sozu = (
             client.container()
-            .from_("bitnami/debian-base-buildpack:bookworm-r0")
-            # Cache
-            #.with_mounted_cache("/var/lib/apt/lists/", apt_cache)
+            .from_("fedora:39")
+            .with_exec(["dnf", "install", "-y", "openssl"])
             # Retrieve executable
-            .with_file("/bin/sozu", container_sozu.file("/src/target/release/sozu"))
+            .with_file("/bin/sozu", container_sozu.file("/app/target/release/sozu"))
             # Mount CI
-            .with_directory("/src", src)
-            .with_workdir("/src")
-            .with_exec(["openssl", "genrsa", "-out", "ci/lolcatho.st.key", "2048"])
-            .with_exec(
-                [
-                    "openssl",
-                    "req",
-                    "-new",
-                    "-x509",
-                    "-key",
-                    "ci/lolcatho.st.key",
-                    "-out",
-                    "ci/lolcatho.st.pem",
-                    "-days",
-                     "365",
-                    "-subj",
-                    "/CN=lolcatho.st",
-                ]
-            )
+            .with_directory("/app", await client.host().directory(".", include=["ci/test.toml","**/ci"]))
+            .with_workdir("/app")
+            #.with_exec(["openssl", "req", "-newkey","rsa:2048","-nodes","-keyout","ci/sozu.io.key","-out","ci/sozu.io.csr","-subj","/CN=sozu.io"])
+            #.with_exec(["openssl", "x509", "-signkey","ci/sozu.io.key","-in","ci/sozu.io.csr","-req","-days","365","-out","ci/sozu.io.pem"])
             .with_service_binding("service_receiver", service_receiver)
             # Launch sozu
             .with_exec(["/bin/sozu", "start", "-c", "ci/test.toml"])
@@ -122,14 +107,18 @@ async def test():
         # Define tests
         ##################
 
-        test_run_https_800 = await (client.container().from_("debian:12.2")
-        # Retrieve executable
-        .with_file(
-            "/bin/bombardier", container_bombardier.file("/go/bin/bombardier")
-        ).with_service_binding("lolcatho.st", service_sozu_RSA2048).with_exec(
-            ["/bin/bombardier", "-c", "800", "-d", "60s", "-k", "https://lolcatho.st:8443"]
-        ).stdout())
-
+        test_run_https_800 = await (
+            client.container()
+            .from_("fedora:39")
+            .with_exec(["dnf", "install", "-y", "openssl"])
+            # Retrieve executable
+            .with_file("/bin/bombardier", container_bombardier.file("/app/bombardier"))
+            .with_service_binding("sozu.io", service_sozu)
+            .with_env_variable("CACHEBUSTER", str(datetime.now()))
+            .with_exec(["/bin/bombardier", "-c", "800", "-d", "60s", "-k", "https://sozu.io:8443/api"])
+            .stdout()
+        )
+        
     ##################
     # Run tests
     ##################
