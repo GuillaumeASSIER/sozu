@@ -14,7 +14,7 @@ use mio::{net::TcpStream, Interest, Token};
 use rusty_ulid::Ulid;
 use time::{Duration, Instant};
 
-use sozu_command::proto::command::{Event, EventKind, ListenerType};
+use sozu_command::{proto::command::{Event, EventKind, ListenerType}, config::MAX_LOOP_ITERATIONS};
 
 use crate::{
     backends::{Backend, BackendError},
@@ -350,7 +350,7 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
 
         if let kawa::ParsingPhase::Error { marker, kind } = self.request_stream.parsing_phase {
             incr!("http.frontend_parse_errors");
-            debug!(
+            warn!(
                 "{} Parsing request error in {:?}: {}",
                 self.log_context(),
                 marker,
@@ -679,13 +679,13 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
 
         if let kawa::ParsingPhase::Error { marker, kind } = self.response_stream.parsing_phase {
             incr!("http.backend_parse_errors");
-            debug!(
-                "{} Parsing request error in {:?}: {}",
+            warn!(
+                "{} Parsing response error in {:?}: {}",
                 self.log_context(),
                 marker,
                 match kind {
                     kawa::ParsingErrorKind::Consuming { index } => {
-                        let kawa = &self.request_stream;
+                        let kawa = &self.response_stream;
                         parser::view(
                             kawa.storage.used(),
                             16,
@@ -1418,36 +1418,44 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
     }
 
     pub fn backend_hup(&mut self) -> StateResult {
-        // println!("=====backend_hup");
+        // there might still data we can read on the socket
         if self.backend_readiness.event.is_readable()
             && self.backend_readiness.interest.is_readable()
         {
-            // there might still data we can read on the socket
-            // println!("=====backend_hup:continue");
             return StateResult::Continue;
         }
+
+        // the backend finished to answer we can close
         if self.response_stream.is_terminated() {
-            // the backend finished to answer we can close
-            // println!("=====backend_hup:terminated");
             return StateResult::CloseBackend;
         }
         match (
             self.request_stream.is_initial(),
             self.response_stream.is_initial(),
         ) {
-            // the backend started to answer so we close
+            // backend stopped before response is finished,
+            // or maybe it was malformed in the first place (no Content-Length)
             (_, false) => {
-                // println!("=====backend_hup:close");
+                error!(
+                    "PROXY session {:?}, backend closed before session is over",
+                    self.frontend_token
+                );
                 StateResult::CloseSession
             }
             // probably backend hup between keep alive request, change backend
             (true, true) => {
-                // println!("=====backend_hup:close_backend");
+                trace!(
+                    "PROXY session {:?} backend hanged up inbetween requests",
+                    self.frontend_token
+                );
                 StateResult::CloseBackend
             }
             // the frontend already transmitted data so we can't redirect
             (false, true) => {
-                // println!("=====backend_hup:503");
+                error!(
+                    "PROXY session {:?}, the front transmitted data but the back closed",
+                    self.frontend_token
+                );
                 self.set_answer(DefaultAnswerStatus::Answer503, None);
                 self.backend_readiness.interest = Ready::EMPTY;
                 StateResult::Continue
@@ -1473,7 +1481,6 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
         metrics: &mut SessionMetrics,
     ) -> SessionResult {
         let mut counter = 0;
-        let max_loop_iterations = 100000;
 
         if self.backend_connection_status.is_connecting()
             && !self.backend_readiness.event.is_empty()
@@ -1502,7 +1509,7 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
                         return SessionResult::Continue;
                     }
                     Err(connection_error) => {
-                        error!("Error connecting to backend: {}", connection_error)
+                        warn!("Error connecting to backend: {}", connection_error)
                     }
                 }
             } else {
@@ -1519,7 +1526,7 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
             return SessionResult::Close;
         }
 
-        while counter < max_loop_iterations {
+        while counter < MAX_LOOP_ITERATIONS {
             let frontend_interest = self.frontend_readiness.filter_interest();
             let backend_interest = self.backend_readiness.filter_interest();
 
@@ -1557,7 +1564,7 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
                                 return SessionResult::Continue;
                             }
                             Err(connection_error) => {
-                                error!("Error connecting to backend: {}", connection_error)
+                                warn!("Error connecting to backend: {}", connection_error)
                             }
                         }
                     }
@@ -1605,7 +1612,7 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
 
             if backend_interest.is_hup() || backend_interest.is_error() {
                 let state_result = self.backend_hup();
-                error!("PROXY session {:?} back error", self.frontend_token);
+
                 trace!("backend_hup: {:?}", state_result);
                 match state_result {
                     StateResult::Continue => {}
@@ -1618,10 +1625,10 @@ impl<Front: SocketHandler, L: ListenerHandler + L7ListenerHandler> Http<Front, L
             counter += 1;
         }
 
-        if counter == max_loop_iterations {
+        if counter >= MAX_LOOP_ITERATIONS {
             error!(
                 "PROXY\thandling session {:?} went through {} iterations, there's a probable infinite loop bug, closing the connection",
-                self.frontend_token, max_loop_iterations
+                self.frontend_token, MAX_LOOP_ITERATIONS
             );
             incr!("http.infinite_loop.error");
 
