@@ -73,7 +73,7 @@ async def test():
         async def command_executor(command):
             await command
 
-        service_receiver = (
+        service_receiver = await (
             client.container()
             .from_("fedora:39")
             .with_exec(["dnf","install","-y","openssl","tmux"])
@@ -86,8 +86,8 @@ async def test():
             .with_file("/bin/lagging_server", container_receiver.file("/app/target/release/lagging_server"))
             .with_file("/bin/sozu", container_sozu.file("/app/target/release/sozu"))
             .with_file("/bin/bombardier", container_bombardier.file("/app/bombardier"))
-            # .as_service()
-            # .start()
+            .as_service()
+            .start()
         )
 
         async def lagging_server():
@@ -110,6 +110,6 @@ async def test():
             tg.start_soon(command_executor, sozu())
             tg.start_soon(command_executor, bombardier())
         
-        #service_receiver.stop()
+        service_receiver.stop()
 
 anyio.run(test)
